@@ -1,0 +1,378 @@
+<!doctype html>
+<html>
+	<head>
+		<title>Collaborative Whiteboard</title>
+		<style>
+			body {
+				overflow: hidden;
+			}
+			.button {
+				border: none;
+				color: white;
+				padding: 15px 32px;
+				text-align: center;
+				text-decoration: none;
+				display: inline-block;
+				font-size: 16px;
+				margin: 4px 2px;
+				cursor: pointer;
+				width: 110px;
+				border-radius: 10px;
+			}
+			.divLayout {
+				border: none;
+				color: white;
+				text-align: center;
+				text-decoration: none;
+				display: inline-block;
+				font-size: 16px;
+				cursor: pointer;
+				position: absolute;
+				top: 5px;
+				left: 5px;
+			}
+			.divLayout2 {
+				border: none;
+				color: white;
+				text-align: center;
+				text-decoration: none;
+				display: inline-block;
+				font-size: 16px;
+				cursor: pointer;
+				position: absolute;
+				top: 5px;
+				right: 5px;
+			}
+			.clearButton {
+				border: none;
+				color: white;
+				padding: 15px 32px;
+				text-align: center;
+				text-decoration: none;
+				display: inline-block;
+				font-size: 16px;
+				margin: 4px 2px;
+				cursor: pointer;
+				width: 110px;
+				border-radius: 10px;
+			}
+			.buttonGreen {background-color: #00ff00;}
+			.buttonBlue {background-color: #0000ff;}
+			.buttonRed {background-color: #ff0000;}
+			.buttonBlack {background-color: #000000;}
+			.buttonMisc {
+				background-color: white;
+				color: black;
+				border: 2px solid #000000;
+			}
+			.slider {
+				width: 40%;
+				height: 20px;
+			}
+		</style>
+		<meta charset="utf-8" />
+		<script type="text/JavaScript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js?ver=1.4.2"></script>
+	</head>
+	<body>
+		<div class="divLayout">
+			<input type="text" placeholder="Name" id="name">
+			<input type="text" placeholder="Room" id="room">
+			<button id ="roomButton" onclick="setRoomAndName()">Join/Create Room</button>
+			<button id ="redButton" class ="button buttonRed" onclick="changeColourRed()">Red</button>
+			<button id ="greenButton" class ="button buttonGreen" onclick="changeColourGreen()">Green</button>
+			<button id ="blueButton" class ="button buttonBlue" onclick="changeColourBlue()">Blue</button>
+			<button id ="blackButton" class ="button buttonBlack" onclick="changeColourBlack()">Black</button>
+			<input autocomplete="off" type="range" min="1" max="7" value = "4" class="slider" id="slider" onclick="sliderChange()">
+		</div>
+		<div class="divLayout2">
+			<input type="text" placeholder="Whiteboard Name" id="saveName">
+			<button id ="saveButton" class ="button buttonMisc" onclick="saveState()">Save</button>
+			<select id="selectState"></select>
+			<button id ="loadButton" class ="button buttonMisc" onclick="loadState()">Load</button>
+			<button id ="clearButton" class ="button buttonMisc" onclick="clearBoard()">Clear</button>
+		</div>
+		<canvas id="whiteboard">
+			Your browser does not support Canvas.
+		</canvas>
+		<script src="/socket.io/socket.io.js"></script>
+		<!-- The core Firebase JS SDK is always required and must be listed first -->
+		<script src="https://www.gstatic.com/firebasejs/8.1.1/firebase-app.js"></script>
+		<script src="https://www.gstatic.com/firebasejs/8.1.1/firebase-analytics.js"></script>
+		<script src="https://www.gstatic.com/firebasejs/8.1.1/firebase-firestore.js"></script>
+		<script>
+var whiteboard;
+var clearButton;
+var colour;
+var slider;
+var lineWidtht;
+var ctx;
+var socket = io();
+
+var name = "";
+var room = "0";
+
+// Initialize
+var firebaseConfig = {
+		apiKey: "AIzaSyC7eMHJyg2rzQYpXkMK1f6frUYY4eKCIB4",
+	    authDomain: "collaborative-whiteboard-lw306.firebaseapp.com",
+	    databaseURL: "https://collaborative-whiteboard-lw306.firebaseio.com",
+	    projectId: "collaborative-whiteboard-lw306",
+	    storageBucket: "collaborative-whiteboard-lw306.appspot.com",
+	    messagingSenderId: "712509608270",
+	    appId: "1:712509608270:web:eb5548f2a57edf23864e1f",
+	    measurementId: "G-5RSYN7K36C"
+};
+firebase.initializeApp(firebaseConfig);
+firebase.analytics();
+var db = firebase.firestore();
+
+socket.on('startingImage', function(msg){
+	drawImageFromURL(msg);
+});
+
+function loadState() {
+	clearBoard();
+	var docRef = db.collection("Rooms").doc(room);
+	docRef.get().then(function(doc) {
+	    if (doc.exists) {
+	    	var img = new Image;
+	    	var temp = doc.data();
+	    	img.src = eval("temp.saved." + document.getElementById('selectState').value);
+	    	img.onload = () => {
+				ctx.drawImage(img, 0, 0); 
+			};
+	    } else {}
+	});
+	emitImage();
+}
+
+function saveState() {
+	var url = whiteboard.toDataURL();
+	var temp = document.getElementById('saveName').value;
+	db.collection("Rooms").doc(room).update({
+		['saved.' + temp]: url
+	});
+	db.collection("Rooms").doc(room).update({
+		'savedNames': firebase.firestore.FieldValue.arrayUnion(temp)
+	});
+	socket.emit('updateMenu', true);
+	updateDrop();
+}
+
+function getCurrentState() {
+	var docRef = db.collection("Rooms").doc(room);
+	docRef.get().then(function(doc) {
+	    if (doc.exists) {
+	    	var img = new Image;
+	    	var temp = doc.data();
+	    	img.src = temp.canvas;
+	    	img.onload = () => {
+				ctx.drawImage(img, 0, 0); 
+			};
+	    } else {}
+	});
+	updateDrop();
+}
+
+function setRoomAndName() {
+	ctx.clearRect(0, 0, whiteboard.width, whiteboard.height);
+	socket.emit('changeRoom', {
+		previousRoom: room,
+		newRoom: document.getElementById('room').value
+	});
+	
+	name = document.getElementById('name').value;
+	room = document.getElementById('room').value;
+	
+	getCurrentState();
+}
+
+// When the server sends a URI, call this method to create an image from it
+socket.on('sendImage', function(msg){
+	drawImageFromURL(msg);
+});
+
+socket.on('updateMenu', function(msg){
+	updateDrop();
+});
+
+// When message 'clear' is received from server, clear the canvas
+socket.on('clear', function(msg){
+	ctx.clearRect(0, 0, whiteboard.width, whiteboard.height);
+});	
+
+function emitImage() {
+	socket.emit('receiveImage', {
+		room: room, 
+		canvas: whiteboard.toDataURL()
+	});
+}
+
+// Draws image onto canvas, given a URI
+function drawImageFromURL(msg) {
+//ctx.clearRect(0, 0, whiteboard.width, whiteboard.height);
+	var img = new Image;
+	img.src = msg;
+	img.onload = () => {
+		ctx.drawImage(img, 0, 0); 
+	};
+}
+
+// Update dropdown menu to show all saved whiteboards
+function updateDrop() {
+	
+while (select.length > 0) {
+	select.remove(0);
+}
+	var ref = db.collection("Rooms").doc(room);
+	var array;
+	ref.get().then(function(doc) {
+		if (doc.exists) {
+			array = doc.data().savedNames;
+			
+			for (var i = 0; i < array.length; i++){
+				var opt = document.createElement('option');
+				opt.value = array[i];
+				opt.innerHTML = array[i];
+				select.appendChild(opt);
+			}
+		}
+	});
+}
+
+// Functions that change the colours of the pen
+function changeColourRed() {
+	colour = "#ff0000";
+}
+function changeColourGreen() {
+	colour = "#00ff00";
+}
+function changeColourBlue() {
+	colour = "#0000ff";
+}
+function changeColourBlack() {
+	colour = "#000000";
+}
+
+function clearBoard() {
+
+	//socket.emit('clear', "Board cleared");
+    ctx.clearRect(0, 0, whiteboard.width, whiteboard.height);
+	var url = whiteboard.toDataURL();
+	db.collection("Rooms").doc(room).update({
+		canvas: url
+	});
+	emitImage();
+}
+
+function sliderChange() {
+	lineWidtht = document.getElementById("slider").value;
+	ctx.lineWidth = lineWidtht;
+}
+
+//window.onload = function() {
+	whiteboard = document.getElementById("whiteboard");
+	clearButton = document.getElementById("clearButton");
+	ctx = whiteboard.getContext("2d");
+	lineWidtht = document.getElementById('slider').value;
+	select = document.getElementById('selectState');
+	
+	// Fill Window Height and Width
+	whiteboard.height = window.innerHeight;
+    whiteboard.width = window.innerWidth;
+	
+	getCurrentState();
+	
+    // Mouse Event Handlers
+	if(whiteboard){
+	
+		var isDown = false;
+		var canvasX, canvasY;
+		ctx.lineWidth = lineWidtht;
+		
+		
+		$(whiteboard)
+		.mousedown(function(e){
+			isDown = true;
+			ctx.beginPath();
+			canvasX = e.pageX - whiteboard.offsetLeft;
+			canvasY = e.pageY - whiteboard.offsetTop;
+			ctx.moveTo(canvasX, canvasY);
+			
+		})
+		.mousemove(function(e){
+			if(isDown !== false) {
+				canvasX = e.pageX - whiteboard.offsetLeft;
+				canvasY = e.pageY - whiteboard.offsetTop;
+				ctx.lineTo(canvasX, canvasY);
+				ctx.strokeStyle = colour;
+				ctx.stroke();
+				emitImage();
+			}
+		})
+		.mouseup(function(e){
+			isDown = false;
+			ctx.closePath();
+			var url = whiteboard.toDataURL();
+	//var map = {canvas: url};
+	var ref = db.collection("Rooms").doc(room);
+	ref.get().then(function(doc) {
+		if (doc.exists) {
+			db.collection("Rooms").doc(room).update({
+				canvas: url
+			});
+		} else {
+			db.collection("Rooms").doc(room).set({
+				canvas: url
+			});
+		}
+	});
+	
+			//emitImage();
+		});
+	}
+	
+	// Touch Events Handlers
+	draw = {
+		started: false,
+		start: function(evt) {
+
+			ctx.beginPath();
+			ctx.moveTo(
+				evt.touches[0].pageX,
+				evt.touches[0].pageY
+			);
+
+			this.started = true;
+
+		},
+		move: function(evt) {
+
+			if (this.started) {
+				ctx.lineTo(
+					evt.touches[0].pageX,
+					evt.touches[0].pageY
+				);
+				ctx.strokeStyle = colour;
+				ctx.lineWidth = lineWidtht;
+				ctx.stroke();
+			}
+
+		},
+		end: function(evt) {
+			this.started = false;
+		}
+	};
+	
+	// Touch Events
+	whiteboard.addEventListener('touchstart', draw.start, false);
+	whiteboard.addEventListener('touchend', draw.end, false);
+	whiteboard.addEventListener('touchmove', draw.move, false);
+	
+	// Disable Page Move
+	document.body.addEventListener('touchmove',function(evt){
+		evt.preventDefault();
+	},false);
+//};</script>
+	</body>
+</html>
